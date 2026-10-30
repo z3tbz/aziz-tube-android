@@ -3,6 +3,8 @@ on:
   push:
     branches: [android]
   workflow_dispatch:
+permissions:
+  contents: write
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -15,10 +17,24 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.11.1"
+      - name: Signing key
+        env:
+          KEY: ${{ secrets.AZIZ_KEYSTORE_B64 }}
+        run: |
+          if [ -n "$KEY" ]; then echo "$KEY" | base64 -d > "$RUNNER_TEMP/aziz.jks"; echo "AZIZ_KEYSTORE=$RUNNER_TEMP/aziz.jks" >> "$GITHUB_ENV"; fi
       - name: Build
+        env:
+          AZIZ_KEY_PASSWORD: ${{ secrets.AZIZ_KEY_PASSWORD }}
         run: gradle :app:assembleRelease --no-daemon --stacktrace
       - uses: actions/upload-artifact@v4
         with:
           name: AZIZ-Tube-Android
           path: app/build/outputs/apk/release/*.apk
           if-no-files-found: error
+      - name: Keep the signed app on the apk branch
+        if: env.AZIZ_KEYSTORE != ''
+        run: |
+          mkdir -p /tmp/out && cp app/build/outputs/apk/release/app-release.apk /tmp/out/AZIZ-Tube.apk
+          git config user.name "github-actions" && git config user.email "actions@github.com"
+          git checkout --orphan apk && git rm -rfq . && cp /tmp/out/AZIZ-Tube.apk . && git add AZIZ-Tube.apk
+          git commit -qm "Signed app from ${GITHUB_SHA::7}" && git push -f origin apk

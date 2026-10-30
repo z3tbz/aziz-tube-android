@@ -16,11 +16,24 @@ android {
         versionName = "1.0"
     }
 
+    // Signed with the app's own key, kept as the repository's secrets (never in the code); without them the build is
+    // left unsigned.
+    val keyFile = System.getenv("AZIZ_KEYSTORE")
+    signingConfigs {
+        if (keyFile != null) create("aziz") {
+            storeFile = file(keyFile)
+            storePassword = System.getenv("AZIZ_KEY_PASSWORD")
+            keyAlias = "aziz"
+            keyPassword = System.getenv("AZIZ_KEY_PASSWORD")
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            if (keyFile != null) signingConfig = signingConfigs.getByName("aziz")
         }
     }
 
