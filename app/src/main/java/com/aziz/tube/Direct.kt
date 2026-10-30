@@ -23,7 +23,10 @@ data class Stream(
     val video get() = mime.startsWith("video/")
 }
 
-class Video(val id: String, val title: String, val channel: String?, val channelId: String?, val lengthSeconds: Long, val description: String, val streams: List<Stream>)
+data class Caption(val lang: String, val name: String, val url: String)
+
+class Video(val id: String, val title: String, val channel: String?, val channelId: String?, val lengthSeconds: Long, val description: String, val streams: List<Stream>,
+    val captions: List<Caption> = emptyList(), val loudnessDb: Double = 0.0)
 
 // A video's streams asked from YouTube directly, in one request (about half a second), as YouTube's visionOS app asks:
 // its answer has plain stream links (nothing to solve), so a video starts at once. The same way the Windows app reads.
@@ -88,7 +91,18 @@ object Direct {
             ))
         }
         if (list.none { it.video } || list.none { !it.video }) throw Refused(tr("ما فيه صورة أو صوت", "No picture or sound"))
+        // Subtitles (as WebVTT) and how loud the video is (for even volume).
+        val caps = mutableListOf<Caption>()
+        r.optJSONObject("captions")?.optJSONObject("playerCaptionsTracklistRenderer")?.optJSONArray("captionTracks")?.let { c ->
+            for (n in 0 until c.length()) {
+                val o = c.getJSONObject(n)
+                val url = o.optString("baseUrl").ifEmpty { null } ?: continue
+                val name = o.optJSONObject("name")?.let { it.optString("simpleText").ifEmpty { it.optJSONArray("runs")?.optJSONObject(0)?.optString("text") ?: "" } } ?: ""
+                caps.add(Caption(o.optString("languageCode"), name, if (url.startsWith("http")) "$url&fmt=vtt" else "https://www.youtube.com$url&fmt=vtt"))
+            }
+        }
+        val loud = r.optJSONObject("playerConfig")?.optJSONObject("audioConfig")?.optDouble("loudnessDb", 0.0) ?: 0.0
         return Video(id, d.optString("title"), d.optString("author").ifEmpty { null }, d.optString("channelId").ifEmpty { null },
-            d.optString("lengthSeconds").toLongOrNull() ?: 0, d.optString("shortDescription"), list)
+            d.optString("lengthSeconds").toLongOrNull() ?: 0, d.optString("shortDescription"), list, caps, loud)
     }
 }

@@ -116,8 +116,8 @@ object Tube {
     }
 
     // YouTube's search with its "Videos" filter (or "Channels").
-    fun search(q: String, channels: Boolean = false): List<Item>? {
-        val r = post("search", """{"context":${context()},"query":${JSONObject.quote(q)},"params":"${if (channels) "EgIQAg==" else "EgIQAQ=="}"}""") ?: return null
+    fun search(q: String, channels: Boolean = false, params: String? = null): List<Item>? {
+        val r = post("search", """{"context":${context()},"query":${JSONObject.quote(q)},"params":"${params ?: if (channels) "EgIQAg==" else "EgIQAQ=="}"}""") ?: return null
         val out = mutableListOf<Item>()
         collect(r, out, HashSet())
         return out
@@ -168,6 +168,10 @@ object Tube {
             null
         }
     }
+
+    fun next(videoId: String): JSONObject? = post("next", """{"context":${context()},"videoId":"$videoId"}""")
+
+    fun continuation(token: String): JSONObject? = post("next", """{"context":${context()},"continuation":"$token"}""")
 
     // The videos YouTube lists beside this one.
     fun related(videoId: String): List<Item> {

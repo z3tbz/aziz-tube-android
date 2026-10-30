@@ -20,6 +20,10 @@ import androidx.media3.exoplayer.SeekParameters
 import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.exoplayer.dash.DashMediaSource
 import androidx.media3.exoplayer.dash.manifest.DashManifestParser
+import androidx.media3.common.MimeTypes
+import androidx.media3.exoplayer.source.MediaSource
+import androidx.media3.exoplayer.source.MergingMediaSource
+import androidx.media3.exoplayer.source.SingleSampleMediaSource
 import androidx.media3.exoplayer.trackselection.DefaultTrackSelector
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -51,6 +55,15 @@ object Playback {
     val family = MutableStateFlow<String?>(null)
     val height = MutableStateFlow(0)
     var queue: List<Item> = emptyList()
+    // What the user added to play next (before the list's own next).
+    val upcoming = mutableListOf<Item>()
+    val notice = MutableStateFlow<String?>(null)
+    val introEnd = MutableStateFlow(0L)
+    val chapters = MutableStateFlow<List<Pair<Long, String>>>(emptyList())
+    private var sponsors: List<Pair<Long, Long>> = emptyList()
+    private var sleepAt = 0L
+    private var sleepAtEnd = false
+    private lateinit var app: Context
     private var opened = 0L
 
     // Reads made ahead (the next video, the first ones of a page): an id's streams, for 5 hours.
@@ -58,7 +71,10 @@ object Playback {
 
     fun init(c: Context) {
         if (::player.isInitialized) return
+        app = c.applicationContext
         selector = DefaultTrackSelector(c)
+        // The subtitle language chosen last time.
+        Store.readFile("subs.txt")?.let { selector.setParameters(selector.buildUponParameters().setPreferredTextLanguage(it)) }
         if (Store.maxHeight > 0) selector.setParameters(selector.buildUponParameters().setMaxVideoSize(Int.MAX_VALUE, Store.maxHeight))
         // Starts after under a second of reserve, keeps 15 to 60 seconds ahead.
         val load = DefaultLoadControl.Builder().setBufferDurationsMs(15_000, 60_000, 800, 2_000).build()
@@ -89,7 +105,18 @@ object Playback {
             override fun onPlaybackStateChanged(state: Int) {
                 if (state == Player.STATE_ENDED) {
                     save()
+                    if (sleepAtEnd) { sleepAtEnd = false; notice.value = tr("مؤقت النوم · انتهى المقطع", "Sleep timer · the video ended"); return }
                     if (Store.autoNext) next()
+                }
+            }
+            // A jump forward early in a part of a series: where its opening ends, for its next parts.
+            override fun onPositionDiscontinuity(old: Player.PositionInfo, new: Player.PositionInfo, reason: Int) {
+                if (reason == Player.DISCONTINUITY_REASON_SEEK) Intros.learn(info.value?.title, old.positionMs, new.positionMs)
+            }
+            // The subtitle language picked is kept for next time.
+            override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
+                tracks.groups.firstOrNull { it.type == C.TRACK_TYPE_TEXT && it.isSelected }?.let { g ->
+                    (0 until g.length).firstOrNull { g.isTrackSelected(it) }?.let { k -> g.getTrackFormat(k).language?.let { Store.writeFile("subs.txt", it) } }
                 }
             }
             override fun onPlayerError(e: PlaybackException) {
@@ -109,6 +136,20 @@ object Playback {
                 main.postDelayed(this, 10_000)
             }
         }, 10_000)
+        // Twice a second: sponsor parts skipped, the opening's button, the sleep timer.
+        main.postDelayed(object : Runnable {
+            override fun run() {
+                if (player.isPlaying) {
+                    val at = player.currentPosition
+                    sponsors.firstOrNull { at >= it.first && at < it.second - 500 }?.let {
+                        player.seekTo(it.second)
+                        notice.value = tr("تخطي جزء إعلاني (SponsorBlock)", "Skipped a sponsor part (SponsorBlock)")
+                    }
+                    if (sleepAt in 1..System.currentTimeMillis()) { sleepAt = 0; player.pause(); notice.value = tr("مؤقت النوم · توقف التشغيل", "Sleep timer · playback stopped") }
+                }
+                main.postDelayed(this, 500)
+            }
+        }, 500)
     }
 
     private fun save() {
@@ -151,16 +192,30 @@ object Playback {
                 val v = withContext(Dispatchers.IO) { readCached(item.id) }
                 if (current.value?.id != item.id) return@launch
                 info.value = v
-                val (fam, video) = Codecs.pick(v.streams, Store.maxHeight)
+                // Data saver on mobile data: 480p at most.
+                val cap = if (Store.dataSaver && Data.metered(app)) 480 else Store.maxHeight
+                val (fam, video) = Codecs.pick(v.streams, cap)
                 family.value = fam.label
                 val mpd = Dash.manifest(v.lengthSeconds, video, Codecs.audio(v.streams))
                 val manifest = DashManifestParser().parse(Uri.parse("https://www.youtube.com/"), ByteArrayInputStream(mpd.toByteArray()))
                 val meta = MediaMetadata.Builder().setTitle(v.title).setArtist(v.channel).setArtworkUri(Uri.parse("https://i.ytimg.com/vi/${v.id}/hqdefault.jpg")).build()
-                val source = DashMediaSource.Factory(OkHttpDataSource.Factory(Net.http).setUserAgent(Direct.AGENT))
-                    .createMediaSource(manifest, MediaItem.Builder().setMediaId(v.id).setMediaMetadata(meta).build())
+                val data = OkHttpDataSource.Factory(Net.http).setUserAgent(Direct.AGENT)
+                val dash = DashMediaSource.Factory(data).createMediaSource(manifest, MediaItem.Builder().setMediaId(v.id).setMediaMetadata(meta).build())
+                // Subtitles beside it, each read only when chosen.
+                val subs = v.captions.map { cap ->
+                    SingleSampleMediaSource.Factory(data).createMediaSource(
+                        MediaItem.SubtitleConfiguration.Builder(Uri.parse(cap.url)).setMimeType(MimeTypes.TEXT_VTT).setLanguage(cap.lang).setLabel(cap.name).build(), C.TIME_UNSET)
+                }
+                val source: MediaSource = if (subs.isEmpty()) dash else MergingMediaSource(dash, *subs.toTypedArray())
                 val start = if (at >= 0) at else Store.resume(v.id)
                 player.setMediaSource(source, start)
                 player.setPlaybackSpeed(Store.speed(v.channel))
+                // Even volume: a loud video brought down to the others' level (YouTube says how loud it is).
+                player.volume = if (Store.evenVolume && v.loudnessDb > 0) Math.pow(10.0, -v.loudnessDb / 20.0).toFloat() else 1f
+                chapters.value = Chapters.of(v.description)
+                introEnd.value = Intros.end(v.title)
+                sponsors = emptyList()
+                scope.launch(Dispatchers.IO) { val s = Sponsor.segments(v.id); if (current.value?.id == v.id) sponsors = s }
                 player.prepare()
                 player.play()
                 // The next one read ahead a little later.
@@ -174,14 +229,32 @@ object Playback {
     }
 
     fun upNext(): Item? {
+        if (upcoming.isNotEmpty()) return upcoming.first()
         val id = current.value?.id ?: return null
         val n = queue.indexOfFirst { it.id == id }
         return if (n >= 0 && n + 1 < queue.size) queue[n + 1] else null
     }
 
     fun next() {
-        upNext()?.let { open(it, -1) }
+        val n = upNext() ?: return
+        upcoming.remove(n)
+        open(n, -1)
     }
+
+    fun enqueue(i: Item) { upcoming.add(i); notice.value = tr("أُضيف لقائمة الانتظار (${upcoming.size})", "Added to the queue (${upcoming.size})") }
+
+    // Sleep timer: after some minutes (0 cancels), or at the end of this video (-1).
+    fun sleep(minutes: Int) {
+        sleepAtEnd = minutes == -1
+        sleepAt = if (minutes > 0) System.currentTimeMillis() + minutes * 60_000L else 0
+        notice.value = when {
+            minutes > 0 -> tr("مؤقت النوم · يتوقف بعد $minutes دقيقة", "Sleep timer · stops in $minutes minutes")
+            minutes == -1 -> tr("مؤقت النوم · يتوقف بنهاية المقطع", "Sleep timer · stops at the end of the video")
+            else -> tr("مؤقت النوم ملغى", "Sleep timer cancelled")
+        }
+    }
+
+    fun skipIntro() { if (introEnd.value > player.currentPosition) player.seekTo(introEnd.value); introEnd.value = 0 }
 
     fun setSpeed(v: Float) {
         player.setPlaybackSpeed(v)

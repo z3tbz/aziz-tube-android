@@ -38,6 +38,18 @@ object Store {
         get() = prefs.getBoolean("autonext", true)
         set(v) = prefs.edit().putBoolean("autonext", v).apply()
 
+    var dataSaver: Boolean
+        get() = prefs.getBoolean("datasaver", true)
+        set(v) = prefs.edit().putBoolean("datasaver", v).apply()
+
+    var evenVolume: Boolean
+        get() = prefs.getBoolean("even", true)
+        set(v) = prefs.edit().putBoolean("even", v).apply()
+
+    var hideWatched: Boolean
+        get() = prefs.getBoolean("hidewatched", false)
+        set(v) = prefs.edit().putBoolean("hidewatched", v).apply()
+
     // The most a phone screen shows; "auto" follows the screen.
     var maxHeight: Int
         get() = prefs.getInt("maxh", 0)
