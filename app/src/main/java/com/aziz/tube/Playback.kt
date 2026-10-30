@@ -82,6 +82,10 @@ object Playback {
             }
         })
         player.addListener(object : Player.Listener {
+            // A speed chosen in the player's gear is kept for this channel.
+            override fun onPlaybackParametersChanged(p: androidx.media3.common.PlaybackParameters) {
+                Store.setSpeed(info.value?.channel, p.speed)
+            }
             override fun onPlaybackStateChanged(state: Int) {
                 if (state == Player.STATE_ENDED) {
                     save()

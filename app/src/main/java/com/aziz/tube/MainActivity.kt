@@ -162,9 +162,12 @@ fun VideoSurface(modifier: Modifier) {
     AndroidView(factory = { c ->
         PlayerView(c).apply {
             player = Playback.player
+            // One play/pause in the middle, the next video beside it; the gear holds quality and speed (one place).
             setShowSubtitleButton(true)
             setShowNextButton(true)
             setShowPreviousButton(false)
+            setShowRewindButton(false)
+            setShowFastForwardButton(false)
             setBackgroundColor(android.graphics.Color.BLACK)
             keepScreenOn = true
         }
@@ -456,8 +459,6 @@ fun PlayerPage(open: (Item, List<Item>) -> Unit, openChannel: (Item) -> Unit, cl
                             val cid = info?.channelId
                             if (cid != null) openChannel(Item(cid, info?.channel ?: "", info?.channel, "https://www.youtube.com/channel/$cid", isChannel = true))
                         })
-                        AssistChip(onClick = { menu = 1 }, label = { Text(tr("الجودة", "Quality")) }, modifier = Modifier.padding(end = 6.dp))
-                        AssistChip(onClick = { menu = 2 }, label = { Text(tr("السرعة", "Speed")) })
                     }
                 }
             }
