@@ -114,7 +114,22 @@ object Series {
 
 // Skipping a series' opening: a jump forward early in a part is kept as where that series' opening ends.
 object Intros {
-    fun end(title: String?): Long = Series.part(title).second?.let { Json.obj("intros.json").optLong(it, 0) } ?: 0
+    private val name = Regex("مقدم|المقدمه|شاره|شارة|تتر|intro|opening|theme song|title sequence", RegexOption.IGNORE_CASE)
+
+    var auto: Boolean
+        get() = Store.readFile("intro-auto.txt") == "1"
+        set(v) = Store.writeFile("intro-auto.txt", if (v) "1" else "0")
+
+    // Found by itself: where you skipped it in this series before, or a chapter at the start named as an opening.
+    fun end(title: String?, description: String = ""): Long {
+        Series.part(title).second?.let { Json.obj("intros.json").optLong(it, 0) }?.takeIf { it > 0 }?.let { return it }
+        val ch = Chapters.of(description)
+        val i = ch.indexOfFirst { it.first <= 5_000 && name.containsMatchIn(it.second) }
+        return if (i >= 0 && i + 1 < ch.size && ch[i + 1].first <= 300_000) ch[i + 1].first else 0
+    }
+
+    // The community's mark (SponsorBlock "intro"), when nothing else knew it.
+    fun marked(id: String): Long = Sponsor.segments(id, "%5B%22intro%22%5D").firstOrNull { it.first <= 90_000 && it.second - it.first >= 5_000 && it.second <= 300_000 }?.second ?: 0
 
     fun learn(title: String?, from: Long, to: Long) {
         val name = Series.part(title).second ?: return
@@ -128,9 +143,9 @@ object Intros {
 
 // SponsorBlock: the community's marks of sponsor and self-promotion parts, skipped.
 object Sponsor {
-    fun segments(id: String): List<Pair<Long, Long>> {
+    fun segments(id: String, categories: String = "%5B%22sponsor%22%2C%22selfpromo%22%2C%22interaction%22%5D"): List<Pair<Long, Long>> {
         val hash = MessageDigest.getInstance("SHA-256").digest(id.toByteArray()).joinToString("") { "%02x".format(it) }
-        val text = Net.get("https://sponsor.ajay.app/api/skipSegments/${hash.take(4)}?categories=%5B%22sponsor%22%2C%22selfpromo%22%2C%22interaction%22%5D") ?: return emptyList()
+        val text = Net.get("https://sponsor.ajay.app/api/skipSegments/${hash.take(4)}?categories=$categories") ?: return emptyList()
         return try {
             val a = JSONArray(text)
             (0 until a.length()).map { a.getJSONObject(it) }.firstOrNull { it.optString("videoID") == id }?.optJSONArray("segments")?.let { s ->
