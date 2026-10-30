@@ -141,6 +141,10 @@ object Playback {
             override fun run() {
                 if (player.isPlaying) {
                     val at = player.currentPosition
+                    // The opening skipped by itself, when chosen; its button gone once past it.
+                    val ie = introEnd.value
+                    if (ie > 0 && Intros.auto && at < ie - 1000) { player.seekTo(ie); introEnd.value = 0; notice.value = tr("تخطّى المقدمة", "Skipped the intro") }
+                    else if (ie > 0 && at >= ie - 1000) introEnd.value = 0
                     sponsors.firstOrNull { at >= it.first && at < it.second - 500 }?.let {
                         player.seekTo(it.second)
                         notice.value = tr("تخطي جزء إعلاني (SponsorBlock)", "Skipped a sponsor part (SponsorBlock)")
@@ -213,9 +217,13 @@ object Playback {
                 // Even volume: a loud video brought down to the others' level (YouTube says how loud it is).
                 player.volume = if (Store.evenVolume && v.loudnessDb > 0) Math.pow(10.0, -v.loudnessDb / 20.0).toFloat() else 1f
                 chapters.value = Chapters.of(v.description)
-                introEnd.value = Intros.end(v.title)
+                introEnd.value = Intros.end(v.title, v.description)
                 sponsors = emptyList()
-                scope.launch(Dispatchers.IO) { val s = Sponsor.segments(v.id); if (current.value?.id == v.id) sponsors = s }
+                scope.launch(Dispatchers.IO) {
+                    val s = Sponsor.segments(v.id)
+                    val m = if (introEnd.value == 0L) Intros.marked(v.id) else 0
+                    if (current.value?.id == v.id) { sponsors = s; if (m > 0 && introEnd.value == 0L) introEnd.value = m }
+                }
                 player.prepare()
                 player.play()
                 // The next one read ahead a little later.

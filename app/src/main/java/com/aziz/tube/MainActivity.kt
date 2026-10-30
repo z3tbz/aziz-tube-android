@@ -585,6 +585,7 @@ fun SettingsPage() {
         Chips(listOf("0" to tr("تلقائي", "Auto"), "1080" to "1080p", "720" to "720p", "480" to "480p"), { it == maxH.toString() }) { maxH = it.toInt(); Store.maxHeight = maxH }
         Toggle(tr("توفير البيانات", "Data saver"), tr("480p بالكثير على بيانات الجوال", "480p at most on mobile data"), Store.dataSaver) { Store.dataSaver = it }
         Toggle(tr("توحيد مستوى الصوت", "Even volume"), tr("المقاطع العالية تنزل لمستوى الباقي", "Loud videos brought down to the others' level"), Store.evenVolume) { Store.evenVolume = it }
+        Toggle(tr("تخطي المقدمة تلقائيًا", "Skip intros automatically"), tr("يلقى المقدمة بنفسه ويتخطاها. مقفول: يطلع زر «تخطي المقدمة»", "Finds the intro by itself and skips it. Off: a «Skip intro» button shows"), Intros.auto) { Intros.auto = it }
         Toggle(tr("تخطي الصمت", "Skip silence"), tr("يقص فترات السكوت", "Cuts silent stretches"), Store.skipSilence) { Playback.setSkipSilence(it) }
         Toggle(tr("التشغيل التلقائي", "Autoplay"), tr("يشغّل التالي عند النهاية", "Plays the next one at the end"), Store.autoNext) { Store.autoNext = it }
 
@@ -659,7 +660,7 @@ fun PlayerPage(open: (Item, List<Item>) -> Unit, openChannel: (Item) -> Unit, cl
             VideoSurface(Modifier.fillMaxSize())
             if (loading) CircularProgressIndicator(Modifier.align(Alignment.Center))
             // Skip the opening, as you did in the last part.
-            if (intro > 0) Button(onClick = { Playback.skipIntro() }, modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp)) { Text(tr("تخطي المقدمة", "Skip intro")) }
+            if (intro > 0 && !Intros.auto) Button(onClick = { Playback.skipIntro() }, modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp)) { Text(tr("تخطي المقدمة", "Skip intro")) }
             IconButton(onClick = close, modifier = Modifier.align(Alignment.TopStart)) { Icon(Icons.Filled.KeyboardArrowDown, null, tint = Color.White) }
         }
         LazyColumn(Modifier.fillMaxSize()) {
