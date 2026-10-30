@@ -73,7 +73,8 @@ object Direct {
         val a = r.optJSONObject("streamingData")?.optJSONArray("adaptiveFormats")
         if (a != null) for (n in 0 until a.length()) {
             val o = a.getJSONObject(n)
-            val url = o.optString("url").ifEmpty { continue }
+            val url = o.optString("url")
+            if (url.isEmpty()) continue
             if (o.has("drmFamilies")) continue
             val m = Regex("^((?:video|audio)/[a-z0-9]+);\\s*codecs=\"([^\"]+)\"").find(o.optString("mimeType")) ?: continue
             val init = o.optJSONObject("initRange") ?: continue
