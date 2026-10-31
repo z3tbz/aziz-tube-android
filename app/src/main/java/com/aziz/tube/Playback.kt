@@ -72,13 +72,15 @@ object Playback {
     fun init(c: Context) {
         if (::player.isInitialized) return
         app = c.applicationContext
-        selector = DefaultTrackSelector(c)
+        // Steps up only after 15 seconds of good network and holds there 25 (fewer quality jumps mid-play), and plays
+        // a size the screen shows, not more.
+        selector = DefaultTrackSelector(c, androidx.media3.exoplayer.trackselection.AdaptiveTrackSelection.Factory(15_000, 25_000, 25_000, 0.7f))
         // The subtitle language chosen last time.
         Store.readFile("subs.txt")?.let { selector.setParameters(selector.buildUponParameters().setPreferredTextLanguage(it)) }
         if (Store.maxHeight > 0) selector.setParameters(selector.buildUponParameters().setMaxVideoSize(Int.MAX_VALUE, Store.maxHeight))
         // Starts after under a second of reserve, keeps 15 to 60 seconds ahead.
         val load = DefaultLoadControl.Builder().setBufferDurationsMs(15_000, 60_000, 800, 2_000).build()
-        player = ExoPlayer.Builder(c, DefaultRenderersFactory(c).setEnableDecoderFallback(true))
+        player = ExoPlayer.Builder(c, DefaultRenderersFactory(c).setEnableDecoderFallback(true).forceEnableMediaCodecAsynchronousQueueing())
             .setTrackSelector(selector)
             .setLoadControl(load)
             .setAudioAttributes(AudioAttributes.Builder().setUsage(C.USAGE_MEDIA).setContentType(C.AUDIO_CONTENT_TYPE_MOVIE).build(), true)
@@ -88,6 +90,8 @@ object Playback {
             .setSeekForwardIncrementMs(10_000)
             .build()
         player.setSeekParameters(SeekParameters.CLOSEST_SYNC)
+        // The screen follows the video's rate (30 or 60) where it can switch without a blink: no judder.
+        player.videoChangeFrameRateStrategy = C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_ONLY_IF_SEAMLESS
         // One sound session for the whole app, so the volume boost stays on it across videos.
         val sid = androidx.media3.common.util.Util.generateAudioSessionIdV21(c)
         player.setAudioSessionId(sid)

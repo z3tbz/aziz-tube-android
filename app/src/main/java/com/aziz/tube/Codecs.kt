@@ -42,12 +42,29 @@ object Codecs {
 
     fun anyHardware(f: Family) = decoders(f).any { hardware(it) }
 
+    // How fast the chip really decodes this size, as the phone maker measured it (null when not measured).
+    private fun measured(f: Family, w: Int, h: Int): Double? = decoders(f).filter { hardware(it) }.mapNotNull {
+        try { it.getCapabilitiesForType(f.mime).videoCapabilities.getAchievableFrameRatesFor(w, h)?.upper } catch (e: Exception) { null }
+    }.maxOrNull()
+
+    // 60 frames only where the chip keeps up with room to spare: measured at 1.2 times the rate, or (not measured) up
+    // to 720p. Otherwise the 30-frame version of the same size, which plays without dropped frames.
+    private fun smooth(f: Family, s: Stream): Boolean {
+        if (s.fps <= 30) return true
+        val m = measured(f, s.width, s.height) ?: return s.height <= 720
+        return m >= s.fps * 1.2
+    }
+
     // The streams to play: the best family the chip decodes, its sizes the chip handles, up to the most asked.
     fun pick(streams: List<Stream>, maxHeight: Int): Pair<Family, List<Stream>> {
         val video = streams.filter { it.video }
         for (f in listOf(Family.AV1, Family.VP9, Family.H264)) {
             if (!anyHardware(f)) continue
             val ok = video.filter { family(it.codecs) == f && (maxHeight <= 0 || it.height <= maxHeight) && hardwareFits(f, it.width, it.height, it.fps) }
+            // A size offered at 60 the chip can't hold drops to its 30 version; one offered only at 60 stays.
+            val calm = ok.filter { s -> smooth(f, s) || ok.none { o -> o.height == s.height && o.fps <= 30 } }
+                .filter { s -> smooth(f, s) || s.height <= 720 }
+            if (calm.isNotEmpty()) return f to calm
             if (ok.isNotEmpty()) return f to ok
         }
         // No chip decoder at all (very rare): H.264 on the processor, the lightest there is.
