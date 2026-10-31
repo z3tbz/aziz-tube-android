@@ -30,6 +30,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
@@ -195,7 +200,7 @@ fun NoticeBar() {
 
 @UnstableApi
 @Composable
-fun VideoSurface(modifier: Modifier, controls: Boolean = true) {
+fun VideoSurface(modifier: Modifier, controls: Boolean = true, onHud: (Boolean) -> Unit = {}) {
     AndroidView(factory = { c ->
         PlayerView(c).apply {
             player = Playback.player
@@ -204,6 +209,7 @@ fun VideoSurface(modifier: Modifier, controls: Boolean = true) {
             layoutDirection = android.view.View.LAYOUT_DIRECTION_LTR
             resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
             setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING)
+            setControllerVisibilityListener(PlayerView.ControllerVisibilityListener { v -> onHud(v == android.view.View.VISIBLE) })
             // One play/pause in the middle, the next video beside it; the gear holds quality and speed (one place).
             setShowSubtitleButton(true)
             setShowNextButton(true)
@@ -219,21 +225,6 @@ fun VideoSurface(modifier: Modifier, controls: Boolean = true) {
     }, onRelease = { it.player = null })
 }
 
-// The app's volume: 50% is the sound as it comes; above it, louder than the phone alone gives.
-@UnstableApi
-@Composable
-fun VolumeRow() {
-    val l by Loud.level.collectAsState()
-    Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-        IconButton(onClick = { Loud.set(if (l == 0) 50 else 0) }) {
-            Icon(if (l == 0) Icons.Filled.VolumeOff else if (l > 50) Icons.Filled.VolumeUp else Icons.Filled.VolumeDown, null, tint = if (l > 50) Accent else Color.White)
-        }
-        Slider(value = l.toFloat(), onValueChange = { Loud.set(it.toInt()) }, valueRange = 0f..100f, modifier = Modifier.weight(1f),
-            colors = SliderDefaults.colors(thumbColor = Accent, activeTrackColor = Accent))
-        Text(if (l > 50) "+" + (l - 50) * 2 + "%" else "$l%", color = if (l > 50) Accent else Muted, fontSize = 12.5.sp, modifier = Modifier.width(52.dp).padding(start = 6.dp))
-    }
-}
-
 @UnstableApi
 @Composable
 fun MiniBar(onOpen: () -> Unit) {
@@ -241,7 +232,9 @@ fun MiniBar(onOpen: () -> Unit) {
     val info by Playback.info.collectAsState()
     var playing by remember { mutableStateOf(Playback.player.isPlaying) }
     LaunchedEffect(Unit) { while (true) { playing = Playback.player.isPlaying; kotlinx.coroutines.delay(500) } }
-    Row(Modifier.fillMaxWidth().background(Surface).clickable { onOpen() }.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+    Row(Modifier.fillMaxWidth().background(Surface).pointerInput(Unit) {
+        detectVerticalDragGestures { c, dy -> if (dy < -12) { c.consume(); onOpen() } }
+    }.clickable { onOpen() }.padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         AsyncImage(model = item?.picture, contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.size(72.dp, 40.dp).clip(RoundedCornerShape(6.dp)))
         Text(info?.title ?: item?.title ?: "", maxLines = 1, overflow = TextOverflow.Ellipsis, color = Color.White, modifier = Modifier.weight(1f).padding(horizontal = 12.dp))
         IconButton(onClick = { if (Playback.player.isPlaying) Playback.player.pause() else Playback.player.play() }) {
@@ -621,7 +614,7 @@ fun SettingsPage() {
         Chips(listOf("0" to tr("تلقائي", "Auto"), "1080" to "1080p", "720" to "720p", "480" to "480p"), { it == maxH.toString() }) { maxH = it.toInt(); Store.maxHeight = maxH }
         Toggle(tr("توفير البيانات", "Data saver"), tr("480p بالكثير على بيانات الجوال", "480p at most on mobile data"), Store.dataSaver) { Store.dataSaver = it }
         Toggle(tr("توحيد مستوى الصوت", "Even volume"), tr("المقاطع العالية تنزل لمستوى الباقي", "Loud videos brought down to the others' level"), Store.evenVolume) { Store.evenVolume = it }
-        Toggle(tr("تقوية أكبر للصوت", "Stronger boost"), tr("للسماعات الضعيفة: يرفع الصوت أكثر ويقوّي الكلام الهادئ، ويمسك الذروات عشان ما يخرّش. على الأعلى قد يطلع تشويش خفيف", "For weak speakers: louder still, quiet speech lifted, peaks held so it doesn't crackle. At the very top a little distortion may come through"), Store.strongBoost) { Loud.setStrong(it) }
+        Toggle(tr("تقوية أكبر للصوت", "Stronger boost"), tr("للسماعات الضعيفة: صوت أعلى بكثير دائمًا، الكلام أوضح والبيس الثقيل ينقص عشان السماعة ما تتشبّع. قد يطلع تشويش، خصوصًا مع رفع شريط الصوت", "For weak speakers: much louder at all times, clearer speech, heavy bass cut so the speaker doesn't choke. Distortion may come through, more so with the volume raised"), Store.strongBoost) { Loud.setStrong(it) }
         Toggle(tr("تخطي المقدمة تلقائيًا", "Skip intros automatically"), tr("يلقى المقدمة بنفسه ويتخطاها. مقفول: يطلع زر «تخطي المقدمة»", "Finds the intro by itself and skips it. Off: a «Skip intro» button shows"), Intros.auto) { Intros.auto = it }
         Toggle(tr("تخطي الصمت", "Skip silence"), tr("يقص فترات السكوت", "Cuts silent stretches"), Store.skipSilence) { Playback.setSkipSilence(it) }
         Toggle(tr("التشغيل التلقائي", "Autoplay"), tr("يشغّل التالي عند النهاية", "Plays the next one at the end"), Store.autoNext) { Store.autoNext = it }
@@ -704,9 +697,49 @@ fun PlayerPage(open: (Item, List<Item>) -> Unit, openChannel: (Item) -> Unit, cl
         VideoSurface(Modifier.fillMaxSize().background(Color.Black))
         return
     }
-    Column(Modifier.fillMaxSize().background(Bg)) {
-        Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).background(Color.Black)) {
-            VideoSurface(Modifier.fillMaxSize())
+    // A drag down on the page takes it down to the small bar (as on YouTube); the page follows the finger, and a short
+    // drag springs back. Taps still reach the player.
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    var drag by remember { mutableStateOf(0f) }
+    val shown by androidx.compose.animation.core.animateFloatAsState(drag, label = "drag")
+    var hud by remember { mutableStateOf(false) }
+    var vol by remember { mutableStateOf(false) }
+    Column(Modifier.fillMaxSize().graphicsLayer { translationY = shown; alpha = 1f - (shown / (size.height.coerceAtLeast(1f))).coerceIn(0f, 0.6f) }.background(Bg)) {
+        Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f).background(Color.Black).pointerInput(Unit) {
+            awaitEachGesture {
+                val down = awaitFirstDown(requireUnconsumed = false, pass = androidx.compose.ui.input.pointer.PointerEventPass.Initial)
+                var total = 0f
+                var dragging = false
+                val slop = viewConfiguration.touchSlop
+                while (true) {
+                    val e = awaitPointerEvent(androidx.compose.ui.input.pointer.PointerEventPass.Initial)
+                    val c = e.changes.firstOrNull { it.id == down.id } ?: break
+                    if (!c.pressed) break
+                    val dy = c.position.y - c.previousPosition.y
+                    val dx = c.position.x - down.position.x
+                    total += dy
+                    if (!dragging && total > slop && total > kotlin.math.abs(dx)) dragging = true
+                    if (dragging) { c.consume(); drag = total.coerceAtLeast(0f) }
+                }
+                if (dragging) {
+                    if (total > with(density) { 110.dp.toPx() }) { drag = 0f; close() } else drag = 0f
+                }
+            }
+        }) {
+            VideoSurface(Modifier.fillMaxSize(), onHud = { hud = it; if (!it) vol = false })
+            // The sound, small in the player's bar: a tap shows a short slider beside it.
+            if (hud) Row(Modifier.align(Alignment.TopEnd).padding(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (vol) {
+                    val l by Loud.level.collectAsState()
+                    Slider(value = l.toFloat(), onValueChange = { Loud.set(it.toInt()) }, valueRange = 0f..100f, modifier = Modifier.width(130.dp).height(28.dp),
+                        colors = SliderDefaults.colors(thumbColor = Color.White, activeTrackColor = if (l > 50) Accent else Color.White, inactiveTrackColor = Color(0x66FFFFFF)))
+                    Text(if (l > 50) "+" + (l - 50) * 2 + "%" else "$l%", color = if (l > 50) Accent else Color.White, fontSize = 11.sp, modifier = Modifier.padding(horizontal = 4.dp))
+                }
+                val l by Loud.level.collectAsState()
+                IconButton(onClick = { vol = !vol }, modifier = Modifier.size(36.dp)) {
+                    Icon(if (l == 0) Icons.Filled.VolumeOff else if (l > 50) Icons.Filled.VolumeUp else Icons.Filled.VolumeDown, null, tint = if (l > 50) Accent else Color.White, modifier = Modifier.size(20.dp))
+                }
+            }
             if (loading) CircularProgressIndicator(Modifier.align(Alignment.Center))
             // Skip the opening, as you did in the last part.
             if (intro > 0 && !Intros.auto) Button(onClick = { Playback.skipIntro() }, modifier = Modifier.align(Alignment.BottomEnd).padding(12.dp)) { Text(tr("تخطي المقدمة", "Skip intro")) }
@@ -721,7 +754,6 @@ fun PlayerPage(open: (Item, List<Item>) -> Unit, openChannel: (Item) -> Unit, cl
                     val hw = Codecs.hardwareName(decoder)
                     val badge = listOfNotNull(if (h > 0) "${h}p" else null, fam, if (decoder == null) null else if (hw) "✓ " + tr("كرت الجوال", "video chip") else tr("المعالج", "processor")).joinToString(" · ")
                     if (badge.isNotEmpty()) Text(badge, color = if (hw) Accent else Muted, fontSize = 12.5.sp, modifier = Modifier.padding(top = 4.dp))
-                    VolumeRow()
                     @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
                     androidx.compose.foundation.layout.FlowRow(Modifier.padding(top = 8.dp)) {
                         val v = info
