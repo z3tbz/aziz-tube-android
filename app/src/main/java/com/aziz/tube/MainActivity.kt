@@ -117,8 +117,22 @@ class MainActivity : ComponentActivity() {
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
         if (playerOpen.value && Playback.player.isPlaying && Build.VERSION.SDK_INT >= 26) {
-            try { enterPictureInPictureMode(PictureInPictureParams.Builder().setAspectRatio(Rational(16, 9)).build()) } catch (_: Exception) {}
+            try { enterPictureInPictureMode(pipParams()) } catch (_: Exception) {}
         }
+    }
+
+    // The small window takes the video's own shape (a wide video gets a wider, larger window; Android caps the rest).
+    // Android decides its size: a pinch on it, or a double tap, makes it bigger, and it is remembered.
+    private fun pipParams(): PictureInPictureParams {
+        val vs = Playback.player.videoSize
+        var w = if (vs.width > 0) (vs.width * vs.pixelWidthHeightRatio).toInt() else 16
+        var h = if (vs.height > 0) vs.height else 9
+        // Android takes 1:2.39 to 2.39:1.
+        if (w * 100 > h * 239) { w = 239; h = 100 }
+        if (h * 100 > w * 239) { h = 239; w = 100 }
+        val b = PictureInPictureParams.Builder().setAspectRatio(Rational(w, h))
+        if (Build.VERSION.SDK_INT >= 31) b.setSeamlessResizeEnabled(true)
+        return b.build()
     }
 
     override fun onPictureInPictureModeChanged(isInPictureInPictureMode: Boolean, newConfig: Configuration) {
@@ -139,7 +153,7 @@ fun Root(playerOpen: MutableState<Boolean>, inPip: State<Boolean>) {
         if (i.isChannel) channel = i else { Playback.play(i, l); playerOpen.value = true }
     }
     if (inPip.value) {
-        VideoSurface(Modifier.fillMaxSize())
+        VideoSurface(Modifier.fillMaxSize(), controls = false)
         return
     }
     Box(Modifier.fillMaxSize().background(Bg)) {
@@ -182,10 +196,15 @@ fun NoticeBar() {
 
 @UnstableApi
 @Composable
-fun VideoSurface(modifier: Modifier) {
+fun VideoSurface(modifier: Modifier, controls: Boolean = true) {
     AndroidView(factory = { c ->
         PlayerView(c).apply {
             player = Playback.player
+            // The bar runs left to right as on YouTube, in Arabic too (mirrored it came out of place), and the picture
+            // fits the frame whole, so the bar sits on the video's own edges.
+            layoutDirection = android.view.View.LAYOUT_DIRECTION_LTR
+            resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
+            setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING)
             // One play/pause in the middle, the next video beside it; the gear holds quality and speed (one place).
             setShowSubtitleButton(true)
             setShowNextButton(true)
@@ -195,7 +214,25 @@ fun VideoSurface(modifier: Modifier) {
             setBackgroundColor(android.graphics.Color.BLACK)
             keepScreenOn = true
         }
-    }, modifier = modifier, onRelease = { it.player = null })
+    }, modifier = modifier, update = { v ->
+        v.useController = controls
+        if (!controls) v.hideController()
+    }, onRelease = { it.player = null })
+}
+
+// The app's volume: 50% is the sound as it comes; above it, louder than the phone alone gives.
+@UnstableApi
+@Composable
+fun VolumeRow() {
+    val l by Loud.level.collectAsState()
+    Row(Modifier.fillMaxWidth().padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        IconButton(onClick = { Loud.set(if (l == 0) 50 else 0) }) {
+            Icon(if (l == 0) Icons.Filled.VolumeOff else if (l > 50) Icons.Filled.VolumeUp else Icons.Filled.VolumeDown, null, tint = if (l > 50) Accent else Color.White)
+        }
+        Slider(value = l.toFloat(), onValueChange = { Loud.set(it.toInt()) }, valueRange = 0f..100f, modifier = Modifier.weight(1f),
+            colors = SliderDefaults.colors(thumbColor = Accent, activeTrackColor = Accent))
+        Text(if (l > 50) "+" + (l - 50) * 2 + "%" else "$l%", color = if (l > 50) Accent else Muted, fontSize = 12.5.sp, modifier = Modifier.width(52.dp).padding(start = 6.dp))
+    }
 }
 
 @UnstableApi
@@ -585,6 +622,7 @@ fun SettingsPage() {
         Chips(listOf("0" to tr("تلقائي", "Auto"), "1080" to "1080p", "720" to "720p", "480" to "480p"), { it == maxH.toString() }) { maxH = it.toInt(); Store.maxHeight = maxH }
         Toggle(tr("توفير البيانات", "Data saver"), tr("480p بالكثير على بيانات الجوال", "480p at most on mobile data"), Store.dataSaver) { Store.dataSaver = it }
         Toggle(tr("توحيد مستوى الصوت", "Even volume"), tr("المقاطع العالية تنزل لمستوى الباقي", "Loud videos brought down to the others' level"), Store.evenVolume) { Store.evenVolume = it }
+        Toggle(tr("تقوية أكبر للصوت", "Stronger boost"), tr("للسماعات الضعيفة: يرفع الصوت أكثر ويقوّي الكلام الهادئ، ويمسك الذروات عشان ما يخرّش. على الأعلى قد يطلع تشويش خفيف", "For weak speakers: louder still, quiet speech lifted, peaks held so it doesn't crackle. At the very top a little distortion may come through"), Store.strongBoost) { Loud.setStrong(it) }
         Toggle(tr("تخطي المقدمة تلقائيًا", "Skip intros automatically"), tr("يلقى المقدمة بنفسه ويتخطاها. مقفول: يطلع زر «تخطي المقدمة»", "Finds the intro by itself and skips it. Off: a «Skip intro» button shows"), Intros.auto) { Intros.auto = it }
         Toggle(tr("تخطي الصمت", "Skip silence"), tr("يقص فترات السكوت", "Cuts silent stretches"), Store.skipSilence) { Playback.setSkipSilence(it) }
         Toggle(tr("التشغيل التلقائي", "Autoplay"), tr("يشغّل التالي عند النهاية", "Plays the next one at the end"), Store.autoNext) { Store.autoNext = it }
@@ -651,6 +689,18 @@ fun PlayerPage(open: (Item, List<Item>) -> Unit, openChannel: (Item) -> Unit, cl
         if (Playback.queue.none { it.id == id }) Playback.queue = listOf(item!!) + related
     }
     BackHandler { close() }
+    // Sideways: the whole screen, the phone's bars hidden (a swipe from the edge shows them for a moment), so the
+    // player's bar is not pushed under them.
+    val view = androidx.compose.ui.platform.LocalView.current
+    DisposableEffect(land) {
+        val w = (view.context as? android.app.Activity)?.window
+        val ic = if (w != null) androidx.core.view.WindowCompat.getInsetsController(w, view) else null
+        if (land && ic != null) {
+            ic.systemBarsBehavior = androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            ic.hide(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+        }
+        onDispose { ic?.show(androidx.core.view.WindowInsetsCompat.Type.systemBars()) }
+    }
     if (land) {
         VideoSurface(Modifier.fillMaxSize().background(Color.Black))
         return
@@ -672,6 +722,7 @@ fun PlayerPage(open: (Item, List<Item>) -> Unit, openChannel: (Item) -> Unit, cl
                     val hw = Codecs.hardwareName(decoder)
                     val badge = listOfNotNull(if (h > 0) "${h}p" else null, fam, if (decoder == null) null else if (hw) "✓ " + tr("كرت الجوال", "video chip") else tr("المعالج", "processor")).joinToString(" · ")
                     if (badge.isNotEmpty()) Text(badge, color = if (hw) Accent else Muted, fontSize = 12.5.sp, modifier = Modifier.padding(top = 4.dp))
+                    VolumeRow()
                     @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
                     androidx.compose.foundation.layout.FlowRow(Modifier.padding(top = 8.dp)) {
                         val v = info

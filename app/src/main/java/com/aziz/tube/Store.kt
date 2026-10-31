@@ -46,6 +46,15 @@ object Store {
         get() = prefs.getBoolean("even", true)
         set(v) = prefs.edit().putBoolean("even", v).apply()
 
+    // The app's own volume (50 is the sound as it comes, above it a boost) and the stronger boost for weak speakers.
+    var appVolume: Int
+        get() = prefs.getInt("appvol", 50)
+        set(v) = prefs.edit().putInt("appvol", v).apply()
+
+    var strongBoost: Boolean
+        get() = prefs.getBoolean("strongboost", false)
+        set(v) = prefs.edit().putBoolean("strongboost", v).apply()
+
     var hideWatched: Boolean
         get() = prefs.getBoolean("hidewatched", false)
         set(v) = prefs.edit().putBoolean("hidewatched", v).apply()

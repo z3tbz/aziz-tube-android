@@ -88,6 +88,10 @@ object Playback {
             .setSeekForwardIncrementMs(10_000)
             .build()
         player.setSeekParameters(SeekParameters.CLOSEST_SYNC)
+        // One sound session for the whole app, so the volume boost stays on it across videos.
+        val sid = androidx.media3.common.util.Util.generateAudioSessionIdV21(c)
+        player.setAudioSessionId(sid)
+        Loud.attach(sid)
         player.skipSilenceEnabled = Store.skipSilence
         player.addAnalyticsListener(object : AnalyticsListener {
             override fun onVideoDecoderInitialized(eventTime: AnalyticsListener.EventTime, decoderName: String, initializedTimestampMs: Long, initializationDurationMs: Long) {
@@ -215,7 +219,7 @@ object Playback {
                 player.setMediaSource(source, start)
                 player.setPlaybackSpeed(Store.speed(v.channel))
                 // Even volume: a loud video brought down to the others' level (YouTube says how loud it is).
-                player.volume = if (Store.evenVolume && v.loudnessDb > 0) Math.pow(10.0, -v.loudnessDb / 20.0).toFloat() else 1f
+                Loud.base = if (Store.evenVolume && v.loudnessDb > 0) Math.pow(10.0, -v.loudnessDb / 20.0).toFloat() else 1f
                 chapters.value = Chapters.of(v.description)
                 introEnd.value = Intros.end(v.title, v.description)
                 sponsors = emptyList()
