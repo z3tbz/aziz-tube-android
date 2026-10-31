@@ -73,14 +73,6 @@ class MainActivity : ComponentActivity() {
         // New videos from the library, every few hours (Android decides when, battery-friendly).
         Notices.schedule(applicationContext)
         if (Build.VERSION.SDK_INT >= 33) requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1)
-        // A newer version: looked for at every opening, downloaded quietly, then Android asks once to install it over
-        // this one (Android lets no app replace itself without that one tap).
-        run {
-            kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
-                val u = try { Updater.check(applicationContext) } catch (e: Exception) { null }
-                if (u != null) runOnUiThread { Playback.notice.value = tr("تحديث جديد ", "New update ") + u.first; Updater.install(this@MainActivity, u.second) }
-            }
-        }
         setContent {
             MaterialTheme(colorScheme = darkColorScheme(primary = Accent, background = Bg, surface = Bg)) {
                 CompositionLocalProvider(LocalLayoutDirection provides if (Store.en) LayoutDirection.Ltr else LayoutDirection.Rtl) {
@@ -88,6 +80,44 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    // A newer version: looked for each time the app comes to the front (at most every 10 minutes; Android keeps the app
+    // alive in the background, so "opening" it is usually a return, not a fresh start), downloaded quietly, then
+    // Android's install screen. Android lets no app replace itself without that one tap; the first time it also asks to
+    // allow installs from this app, and the screen for that opens by itself.
+    private var updateLooked = 0L
+    private var updateReady: java.io.File? = null
+    private var resumed = false
+
+    override fun onResume() {
+        super.onResume()
+        resumed = true
+        updateReady?.let { offerUpdate(it); return }
+        if (System.currentTimeMillis() - updateLooked < 600_000L) return
+        updateLooked = System.currentTimeMillis()
+        kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
+            val u = try { Updater.check(applicationContext) } catch (e: Exception) { null } ?: return@launch
+            runOnUiThread {
+                Playback.notice.value = tr("تحديث جديد ", "New update ") + u.first
+                updateReady = u.second
+                if (resumed) offerUpdate(u.second)
+            }
+        }
+    }
+
+    override fun onPause() {
+        resumed = false
+        super.onPause()
+    }
+
+    private fun offerUpdate(f: java.io.File) {
+        if (Build.VERSION.SDK_INT >= 26 && !packageManager.canRequestPackageInstalls()) {
+            try { startActivity(Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, android.net.Uri.parse("package:$packageName"))) } catch (_: Exception) {}
+            return
+        }
+        updateReady = null
+        try { Updater.install(this, f) } catch (_: Exception) {}
     }
 
     override fun onStart() {
