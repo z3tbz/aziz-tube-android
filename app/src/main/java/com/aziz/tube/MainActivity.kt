@@ -68,10 +68,9 @@ class MainActivity : ComponentActivity() {
         // New videos from the library, every few hours (Android decides when, battery-friendly).
         Notices.schedule(applicationContext)
         if (Build.VERSION.SDK_INT >= 33) requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1)
-        // A newer version: downloaded quietly, then Android asks to install it over this one (once every 6 hours).
-        val last = Store.readFile("update-check.txt")?.toLongOrNull() ?: 0
-        if (System.currentTimeMillis() - last > 6 * 3_600_000L) {
-            Store.writeFile("update-check.txt", System.currentTimeMillis().toString())
+        // A newer version: looked for at every opening, downloaded quietly, then Android asks once to install it over
+        // this one (Android lets no app replace itself without that one tap).
+        run {
             kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
                 val u = try { Updater.check(applicationContext) } catch (e: Exception) { null }
                 if (u != null) runOnUiThread { Playback.notice.value = tr("تحديث جديد ", "New update ") + u.first; Updater.install(this@MainActivity, u.second) }
